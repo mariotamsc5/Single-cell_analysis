@@ -2,60 +2,60 @@ library(Seurat)
 library(SeuratDisk)
 library(ggplot2)
 
-# 1. Leer la matriz desde el archivo .h5
+# 1. Read the matrix from the .h5 file
 counts <- Read10X_h5("C:/Users/.../GSE183206_aggr_filtered_counts_matrix.h5")
 
-# 2. Crear el objeto Seurat
+# 2. Create Seurat object
 seurat_obj <- CreateSeuratObject(counts = counts)
 
 head(Cells(seurat_obj))
 
-# etiquetas por defecto
+# Default tags
 table(seurat_obj$orig.ident)
 
-# 3. Extraer el identificador de la muestra del barcode
-# Cogiendo lo que está después del último separador (- o _)
+# 3. Extract the sample identifier from the default barcode
+# Taking what is after the last separator (- o _)
 seurat_obj$sample_id <- gsub(".*[-_]", "", Cells(seurat_obj))
 
-# 4. Asignar Genotipos basándonos en la descripción de GEO
-# rd10 = muestras 1 y 2 | WildType = muestras 3 y 4
+# 4. Assign Genotypes based on the GEO description
+# rd10 = samples 1 y 2 | WildType = samples 3 y 4
 seurat_obj$genotype <- ifelse(seurat_obj$sample_id %in% c("1", "2"), "rd10", "WildType")
 
-# 5. Verificar que se dividieron bien
+# 5. Verify that they were divided correctly
 table(seurat_obj$genotype)
 
 
-# 6. Identificar genes con alta variabilidad (importante para detectar la enfermedad)
+# 6. Identify genes with high variability (important for detecting the disease)
 seurat_obj <- NormalizeData(seurat_obj)
 seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
 
-# 7. Escalar datos (centrar la expresión de los genes)
+# 7. Scale data (center gene expression)
 seurat_obj <- ScaleData(seurat_obj)
 
-# 8. Análisis de Componentes Principales (PCA)
+# 8. Principal Component Analysis (PCA)
 seurat_obj <- RunPCA(seurat_obj, npcs = 30)
 
-# 9. Construir el UMAP
-# 20 dimensiones porque parece ser lo estándar para retina en Seurat v3/v4, 1:20 antes
+# 9. Build UMAP
+# 20-30 dimensions because it seems to be the standard for retina in Seurat v3/v4
 seurat_obj <- RunUMAP(seurat_obj, dims = 1:30)
 
-# 10. Encontrar vecinos (obligatorio antes de probar resoluciones), 1:20 antes
+# 10. Finding neighbors (required before testing resolutions)
 seurat_obj <- FindNeighbors(seurat_obj, dims = 1:30)
 
 # ===
-# TEST DE RESOLUCIONES
+# RESOLUTION TEST
 # ===
-# Probar diferentes niveles y ver cuántos clusters salen
+# Try different levels and see how many clusters emerge
 #for (res in seq(0.1, 1.2, by = 0.1)) {
  # seurat_obj <- FindClusters(seurat_obj, resolution = res, verbose = FALSE)
   #n_clusters <- length(unique(Idents(seurat_obj)))
-  #cat("Resolución:", res, "| Clusters encontrados:", n_clusters, "\n")
+  #cat("Resolution:", res, "| Clusters found:", n_clusters, "\n")
 #}
 
-# 11. ELECCIÓN FINAL de resolución
+# 11. FINAL CHOICE of resolution
 seurat_obj <- FindClusters(seurat_obj, resolution = 0.5)
 
-# 12. Grupos con genes para identificar clusters
+# 12. Groups with genes to identify clusters
 markers_to_check <- list(
   "Rod photoreceptor cells" = c("Rho","Nrl","Nr2e3","Gnat1","Gnb1","Gngt1","Pde6a","Pde6b","Pde6g","Cnga1","Cngb1","Guca1a","Guca1b","Rom1","Prph2","Slc24a1","Sag","Crx","Rp1","Rp1l1","Rdh12","Abca4","Prom1","Reep6","Unc119","Tulp1","Aipl1","Elovl4","Kcnj14","Rgs9","Rgs9bp"),
   
@@ -126,13 +126,13 @@ markers_to_check <- list(
 )
 
 
-# 13. Limpiar lista de marcadores
+# 13. Clear markers list
 lista_limpia <- lapply(markers_to_check, function(x) {
   intersect(x, rownames(seurat_obj))
 })
 
-# 14. Calcular el puntaje para cada uno de los grupos
-# Esto le dice a Seurat cuanto se parece cada célula a las listas
+# 14. Calculate the score for each group
+# This tells Seurat how closely each cell matches the lists
 for(i in 1:length(lista_limpia)) {
   seurat_obj <- AddModuleScore(
     object = seurat_obj,
@@ -141,35 +141,35 @@ for(i in 1:length(lista_limpia)) {
   )
 }
 
-# 15. Asignar el nombre del grupo con el puntaje más alto a cada célula
-# Extraer los scores
+# 15. Assign the name of the group with the highest score to each cell.
+# Extract the scores
 score_cols <- grep("Score_", colnames(seurat_obj@meta.data), value = TRUE)
 score_data <- seurat_obj@meta.data[, score_cols]
 colnames(score_data) <- names(lista_limpia)
 
-# 16. Identificar el tipo celular con score máximo para cada célula
+# 16. Identify the cell type with the highest score for each cell.
 seurat_obj$best_match <- colnames(score_data)[max.col(score_data, ties.method = "first")]
 
-# 17. Asignar a CADA CLUSTER el nombre que más se repite dentro de él
-# Esto limpia el "ruido"
+# 17. Assign each cluster the name that is most frequently repeated within it.
+# This removes the "noise"
 cluster_ann <- aggregate(best_match ~ seurat_clusters, data = seurat_obj@meta.data, 
                          FUN = function(x) names(which.max(table(x))))
 
-# 18. Crear vector para renombrar
+# 18. Create vector to rename
 new_cluster_names <- cluster_ann$best_match
 names(new_cluster_names) <- cluster_ann$seurat_clusters
 
-# 19. Aseguramos que la identidad activa sean los números de los clusters
+# 19. Ensure that the active identity is the cluster numbers
 Idents(seurat_obj) <- "seurat_clusters"
 
-# 20. Verificamos qué nombres tienen los clusters ahora mismo
+# 20. Check what names the clusters have right now
 print(levels(seurat_obj))
 
-# 21. Aplicar los nombres finales
+# 21. Apply final names
 seurat_obj <- RenameIdents(seurat_obj, new_cluster_names)
 seurat_obj$cell_type_final <- Idents(seurat_obj)
 
-# 22. Gráfico UMAP Final
+# 22. Final UMAP chart
 DimPlot(seurat_obj, 
         reduction = "umap", 
         split.by = "genotype", 
@@ -182,14 +182,14 @@ DimPlot(seurat_obj,
   labs(title = "Retina Comparative Analysis: WT vs rd10",
        subtitle = "Annotation based on Module Scoring and Clusters (Res 0.5)")
 
-# 23. Grafico gen Egr1 o el que sea
-FeaturePlot(seurat_obj, features = "Glul", split.by = "genotype")
+# 23. Gene Egr1 graph or another
+FeaturePlot(seurat_obj, features = "Egr1", split.by = "genotype")
 
 
-# 24. Definir colores (Gris para WT, Rojo para rd10 como en el paper)
+# 24. Define colors
 colores_genotipo <- c("WildType" = "#7F7F7F", "rd10" = "#D62728")
 
-# 25. UMAP overlap de genotypes
+# 25. UMAP genotypes overlap
 DimPlot(seurat_obj, 
         group.by = "genotype", 
         cols = colores_genotipo,
@@ -197,7 +197,7 @@ DimPlot(seurat_obj,
   theme_minimal() +
   ggtitle("UMAP Overlap of Genotypes: WT vs rd10")
 
-# 26. UMAP por genotypes lado a lado
+# 26. UMAP genotypes side by side
 DimPlot(seurat_obj, 
         reduction = "umap", 
         group.by = "genotype", 
@@ -206,7 +206,7 @@ DimPlot(seurat_obj,
   theme_minimal() +
   ggtitle("WT vs rd10")
 
-# 27. Gráfico por cada tipo celular
+# 27. UMAP per cell type
 DimPlot(seurat_obj, 
         reduction = "umap", 
         group.by = "genotype", 
