@@ -1,21 +1,21 @@
 # ===
-# Parte 2 signaling pathwat network
+# Part 2 signaling pathwat network
 # ===
 
 library(Seurat)
 library(CellChat)
 
-# 1. Leer la matriz desde el archivo .h5
+# 1. Read the matrix from the .h5 file
 counts <- Read10X_h5("C:/Users/.../GSE183206_aggr_filtered_counts_matrix.h5")
 
-# 2. Crear objeto Seurat
+# 2. Create Seurat object
 seurat_obj <- CreateSeuratObject(counts = counts, project = "Retina_Mouse")
 
-# 3. Extraer metadatos de los Barcodes
+# 3. Extracting metadata from barcodes
 seurat_obj$sample_id <- gsub(".*[-_]", "", Cells(seurat_obj))
 seurat_obj$genotype <- ifelse(seurat_obj$sample_id %in% c("1", "2"), "rd10", "WildType")
 
-# 4. Procesamiento (Normalización y UMAP)
+# 4. Processing (Normalization and UMAP)
 seurat_obj <- NormalizeData(seurat_obj) %>% 
   FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>% 
   ScaleData() %>% 
@@ -24,7 +24,7 @@ seurat_obj <- NormalizeData(seurat_obj) %>%
   FindNeighbors(dims = 1:30) %>% 
   FindClusters(resolution = 0.5)
 
-# 5. Definir marcadores clásicos de retina (Mouse)
+# 5. Define retina markers
 markers_to_check <- list(
   "Rod photoreceptor cells" = c("Rho","Nrl","Nr2e3","Gnat1","Gnb1","Gngt1","Pde6a","Pde6b","Pde6g","Cnga1","Cngb1","Guca1a","Guca1b","Rom1","Prph2","Slc24a1","Sag","Crx","Rp1","Rp1l1","Rdh12","Abca4","Prom1","Reep6","Unc119","Tulp1","Aipl1","Elovl4","Kcnj14","Rgs9","Rgs9bp"),
   
@@ -73,15 +73,15 @@ markers_to_check <- list(
 
 
 
-# CLASIFICACIÓN POR GENES
+# CLASSIFICATION BY GENES
 
-# A. Limpiar lista de marcadores
+# A. Clear markers list
 lista_limpia <- lapply(markers_to_check, function(x) {
   intersect(x, rownames(seurat_obj))
 })
 
-# B. Calcular el puntaje para cada uno de los grupos
-# Esto le dice a Seurat cuanto se parece cada célula a las listas
+# B. Calculate the score for each group
+# This tells Seurat how closely each cell matches the lists
 for(i in 1:length(lista_limpia)) {
   seurat_obj <- AddModuleScore(
     object = seurat_obj,
@@ -90,49 +90,48 @@ for(i in 1:length(lista_limpia)) {
   )
 }
 
-# C. Asignar el nombre del grupo con el puntaje más alto a cada célula
-# Extraer los scores
+# C. Assign the name of the group with the highest score to each cell.
+# Extract the scores
 score_cols <- grep("Score_", colnames(seurat_obj@meta.data), value = TRUE)
 score_data <- seurat_obj@meta.data[, score_cols]
 colnames(score_data) <- names(lista_limpia)
 
-# Identificar el tipo celular con score máximo para cada célula
+# Identify the cell type with the highest score for each cell.
 seurat_obj$best_match <- colnames(score_data)[max.col(score_data, ties.method = "first")]
 
-# Asignar a CADA CLUSTER el nombre que más se repite dentro de él
-# Esto limpia el "ruido"
+# Assign each cluster the name that is most frequently repeated within it.
+# This removes the "noise"
 cluster_ann <- aggregate(best_match ~ seurat_clusters, data = seurat_obj@meta.data, 
                          FUN = function(x) names(which.max(table(x))))
 
-# Crear vector para renombrar
+# Create vector to rename
 new_cluster_names <- cluster_ann$best_match
 names(new_cluster_names) <- cluster_ann$seurat_clusters
 
-# Aseguramos que la identidad activa sean los números de los clusters
+# Ensure that the active identity is the cluster numbers
 Idents(seurat_obj) <- "seurat_clusters"
-# Verificamos qué nombres tienen los clusters ahora mismo
+# Check what names the clusters have right now
 print(levels(seurat_obj))
 
-# Aplicar los nombres finales
+# Apply the final names
 seurat_obj <- RenameIdents(seurat_obj, new_cluster_names)
 seurat_obj$cell_type_final <- Idents(seurat_obj)
 
 
-# 10. Nombres de clusters
+# 10. Cluster names
 clusters_interes <- c("Rod photoreceptor cells", "Rod bipolar cells", "Cone photoreceptor cells", "Muller glia", "Cone bipolar cells", 
                       "Microglia", "Endothelial cells", "Horizontal cells", "GABA_Amacrine", "Reticulocytes", "Starburst amacrine cells")
 
-# 11. Función para procesar CellChat (Ahorra repetir código)
+# 11. Function to process CellChat
 
 preparar_cc_mouse <- function(obj, group_name) {
   data.input <- GetAssayData(obj, assay = "RNA", layer = "data")
   
-  # Si los genes fueran Ensembl, aquí iría el mapIds(org.Mm.eg.db...)
-  # Como en .h5 ya suelen ser Símbolos (Rho, C1qa), solo aseguro unicidad:
+# Since genes are usually symbols in .h5 files (Rho, C1qa), guarantee uniqueness:
   rownames(data.input) <- make.unique(rownames(data.input))
   
   cc <- createCellChat(object = data.input, meta = obj@meta.data, group.by = "cell_type_final")
-  cc@DB <- CellChatDB.mouse # BASE DE DATOS RATÓN
+  cc@DB <- CellChatDB.mouse # mouse database
   
   cc <- subsetData(cc) %>% 
     identifyOverExpressedGenes() %>% 
@@ -145,74 +144,72 @@ preparar_cc_mouse <- function(obj, group_name) {
 }
 
 
-# <-- hasta aquí para todo igual
-
 # =========================================
-#OPCION 1
+#OPTION 1
 # =========================================
-# 12. Dividir por genotipo usando el objeto COMPLETO
+# 12. Split by genotype using the complete object
 seurat_RD10_full <- subset(seurat_obj, genotype == "rd10")
 seurat_WT_full <- subset(seurat_obj, genotype == "WildType")
 
-# 13. Procesar CellChat con la función que hicimos (pero con todas las células)
+# 13. Process CellChat with the function we made (with all the cells)
 cellchat_RD10_full <- preparar_cc_mouse(seurat_RD10_full)
 cellchat_WT_full <- preparar_cc_mouse(seurat_WT_full)
 
-# 14. Fusionar ahora que ambos tendrán datos de casi todos los tipos celulares
+# 14. Merging them now will give both parties data on almost all cell types
 object.list_full <- list(WT = cellchat_WT_full, rd10 = cellchat_RD10_full)
 cellchat_merged_full <- mergeCellChat(object.list_full, add.names = names(object.list_full))
 
-# 15. Este gráfico te dirá qué vías "nacen" en RD10 o se pierden en WT
+# 15. Chart with which routes "originate" in RD10 or are lost in WT
 rankNet(cellchat_merged_full, mode = "comparison", stacked = T, do.stat = T)
 
 
 # ========================================
-# solo dos tipos de celulas
+# OPTION 2: only two cell types
 # ========================================
-# NO NECESARIO. Visualizar SÓLO la interacción que interesa
-# Aunque el objeto tenga 10 tipos de células, aquí le pedimos solo estas dos:
+# NOT NECESSARY. Visualize ONLY the interaction of interest.
+# Even if the object has 10 cell types, here we only ask for these two:
 
 p1 <- netVisual_bubble(cellchat_WT_full, sources.use = "Muller glia", targets.use = "Microglia", title.name = "WT")
 p2 <- netVisual_bubble(cellchat_RD10_full, sources.use = "Muller glia", targets.use = "Microglia", title.name = "RD10")
 
 p1 + p2
 
-# 12. Definimos los tipos celulares de interés
+# 12. Define the cell types of interest
 
-# Filtrar solo las poblaciones que quieres comparar (ej: Microglia y Rods)
+# Filter only the populations to compare (e.g., Microglia and Rods)
 seurat_filtrado <- subset(seurat_obj, idents = c("Rod photoreceptor cells", "Rod bipolar cells"))
 
-# 13. Dividir por genotipo
+# 13. Divide by genotype
 seurat_wt_filtrado <- subset(seurat_filtrado, subset = genotype == "WildType")
 seurat_rd10_filtrado <- subset(seurat_filtrado, subset = genotype == "rd10")
 
-# 14. Forzar a Seurat a olvidar los clusters que ya no están
+# 14. Make Seurat forget the clusters that are no longer there
 seurat_wt_filtrado$cell_type_final <- droplevels(seurat_wt_filtrado$cell_type_final)
 seurat_rd10_filtrado$cell_type_final <- droplevels(seurat_rd10_filtrado$cell_type_final)
 
-# 15. Actualizar los Idents por si acaso
+# 15. Update the Idents just in case
 Idents(seurat_wt_filtrado) <- seurat_wt_filtrado$cell_type_final
 Idents(seurat_rd10_filtrado) <- seurat_rd10_filtrado$cell_type_final
 
-# 16. Usar función con datos solo de los dos tipos celulares target
+# 16. Use function with data only from the two target cell types
 cellchat_wt_filtrado <- preparar_cc_mouse(seurat_wt_filtrado)
 cellchat_rd10_filtrado <- preparar_cc_mouse(seurat_rd10_filtrado)
 
-# 17. Fusión para ver qué señales "nacen" en la degeneración rd10
+# 17. Merge to see what signals are "born" in rd10 degeneration
 object.list_filtrado <- list(WT = cellchat_wt_filtrado, rd10 = cellchat_rd10_filtrado)
 cellchat_merged_filtrado <- mergeCellChat(object.list_filtrado, add.names = names(object.list_filtrado))
 
-# 18. Comparar la fuerza de las vías de señalización
+# 18. Compare the strength of the signaling pathways
 rankNet(cellchat_merged_filtrado, mode = "comparison", stacked = TRUE, do.stat = TRUE)
 
-# 19. NECESARIO PERO DA DETALLES. TODAS las interacciones detectadas entre cell type x y cell type y
+# 19. Not necessary, but provide details. All detected interactions between cell type X and cell type Y
 test_interacciones <- subsetCommunication(cellchat_RD10_full, 
                                           sources.use = "Muller glia", 
                                           targets.use = "Microglia")
 print(test_interacciones)
 # ===========================================
 
-# NO NECESARIO. Comparación de número de interacciones y fuerza (weight)
+# NOT NECESSARY. Comparison of number of interactions and strength (weight)
 gg1 <- compareInteractions(cellchat_merged_filtrado, group = c(1,2))
 gg2 <- compareInteractions(cellchat_merged_filtrado, group = c(1,2), measure = "weight")
 gg1 + gg2
@@ -221,49 +218,48 @@ gg1 + gg2
 
 
 # =========================================
-# VISUALIZAR PATHWAY NETWORK
+# Option 3: VIEW PATHWAY NETWORK
 # =========================================
-#eliminar clusters sin nombre celular
-# 1. Ir al objeto Seurat original y quitar los clusters con números
-# Solo nos quedamos con las células que tienen un nombre asignado
+#Remove unnamed cell clusters
+# 1. Only keep the cells that have an assigned name
 seurat_final <- subset(seurat_obj, idents = clusters_interes)
 
-# 2. Dividir y crear los CellChat desde cero con este objeto limpio
+# 2. Split and create CellChats from scratch with this clean object
 seurat_WT_clean <- subset(seurat_final, genotype == "WildType")
 seurat_RD10_clean <- subset(seurat_final, genotype == "rd10")
 
-# 3. Utilizar la función de antes
+# 3. Use the previous function
 cellchat_WT <- preparar_cc_mouse(seurat_WT_clean)
 cellchat_RD10 <- preparar_cc_mouse(seurat_RD10_clean)
 
-# 4. Primero, unir los objetos limpios en una lista
+# 4. First, combine the clean objects into a list
 object.list <- list(WT = cellchat_WT, RD10 = cellchat_RD10)
 
-# 5. Escoger pathway para ver su network
+# 5. Choose pathway to view its network
 pathway_interes <- "APP"
 
-# 6. IMPORTANTE: Calcular el peso máximo entre AMBOS objetos para esa vía
-# Esto asegura que el grosor de las flechas signifique lo mismo en los dos mapas
+# 6. IMPORTANT: Calculate the maximum weight of BOTH objects for that route.
+# This ensures that the arrow thickness means the same thing on both maps.
 weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathway_interes)
 
-# 7. Configuramos el espacio: 1 fila, 2 columnas
+# 7. Configure the space: 1 row, 2 columns
 par(mfrow = c(1,2), xpd = TRUE)
 
-# 8. Gráfico para RD10 usando weight.max
+# 8. Chart for rd10
 netVisual_aggregate(cellchat_RD10, 
                     signaling = pathway_interes, 
                     layout = "circle", 
-                    edge.weight.max = weight.max[1], # Escala compartida
+                    edge.weight.max = weight.max[1], # Shared scale
                     signaling.name = paste(pathway_interes, "- rd10"))
 
-# 9. Gráfico para WT usando weight.max
+# 9. Chart for WT
 netVisual_aggregate(cellchat_WT, 
                     signaling = pathway_interes, 
                     layout = "circle", 
-                    edge.weight.max = weight.max[1], # Escala compartida
+                    edge.weight.max = weight.max[1], # Shared scale
                     signaling.name = paste(pathway_interes, "- WT"))
 
-# 6*. Si no hay comunicación importante en wt:
+# 6*. If there is no important communication on WT:
 
 netVisual_aggregate(cellchat_RD10, 
                     signaling = pathway_interes, 
