@@ -3,7 +3,7 @@ library(SeuratDisk)
 library(ggplot2)
 
 # 1. Leer la matriz desde el archivo .h5
-counts <- Read10X_h5("C:/Users/mario/Downloads/GSE183206_aggr_filtered_counts_matrix.h5")
+counts <- Read10X_h5("C:/Users/.../GSE183206_aggr_filtered_counts_matrix.h5")
 
 # 2. Crear el objeto Seurat
 seurat_obj <- CreateSeuratObject(counts = counts)
